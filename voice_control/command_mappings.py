@@ -59,11 +59,29 @@ COMMAND_KEYWORDS = {
         "time",
         "what time",
         "current time",
+        "what's the time",
+        "tell me the time",
     ],
     "weather": [
         "weather",
         "temperature",
         "forecast",
+        "how's the weather",
+        "what's the weather",
+    ],
+    "date": [
+        "date",
+        "what's the date",
+        "today's date",
+        "what day",
+        "what's today",
+    ],
+    "open": [
+        "open",
+        "launch",
+        "start app",
+        "run",
+        "open app",
     ],
 }
 
