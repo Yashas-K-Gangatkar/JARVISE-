@@ -1,8 +1,8 @@
 """
 Face Detection Module - Real-time face detection and recognition.
 
-Uses OpenCV for video capture and face_recognition library
-for face detection and identification.
+Uses OpenCV's built-in Haar Cascade and LBPH Face Recognizer.
+No external face_recognition library needed.
 """
 
 import cv2
@@ -18,8 +18,8 @@ class FaceDetectionModule:
     Detects faces through the webcam and publishes face events.
 
     Features:
-    - Real-time face detection using OpenCV + face_recognition
-    - Face matching against known user encodings
+    - Real-time face detection using OpenCV Haar Cascades
+    - Face matching using LBPH (Local Binary Patterns Histograms) recognizer
     - Greeting cooldown to prevent repeated greetings
     - Visual overlay with bounding boxes and names
     """
@@ -32,40 +32,85 @@ class FaceDetectionModule:
         self._running = False
         self._thread = None
         self._last_greeting_time = {}  # name -> timestamp
-        self._known_encodings = []
         self._known_names = []
         self._cooldown = self.config.get("greeting_cooldown_seconds", 300)
+
+        # OpenCV face detector (Haar Cascade - built into OpenCV)
+        cascade_path = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+        self._face_cascade = cv2.CascadeClassifier(cascade_path)
+
+        # LBPH Face Recognizer (built into OpenCV)
+        self._recognizer = cv2.face.LBPHFaceRecognizer_create(
+            radius=1, neighbors=8, grid_x=8, grid_y=8
+        )
+        self._recognizer_trained = False
 
         # Load known faces
         self._load_known_faces()
 
     def _load_known_faces(self):
-        """Load face encodings from the known_faces directory."""
-        try:
-            import face_recognition
-        except ImportError:
-            print("[FaceDetection] WARNING: face_recognition not installed.")
-            print("[FaceDetection] Install with: pip install face-recognition")
-            return
-
+        """Load face data and train the LBPH recognizer."""
         known_faces_dir = self.config.get("known_faces_dir", "known_faces")
         face_data_file = os.path.join(known_faces_dir, "face_data.json")
 
-        # Try loading pre-computed encodings
-        if os.path.exists(face_data_file):
-            with open(face_data_file, "r") as f:
-                face_data = json.load(f)
-            self._known_names = list(face_data.keys())
-            self._known_encodings = [
-                np.array(enc) for enc in face_data.values()
-            ]
-            print(
-                f"[FaceDetection] Loaded {len(self._known_names)} known faces "
-                f"from {face_data_file}"
-            )
-        else:
+        if not os.path.exists(face_data_file):
             print(f"[FaceDetection] No face data found at {face_data_file}")
             print("[FaceDetection] Run register_face.py to register users")
+            return
+
+        with open(face_data_file, "r") as f:
+            face_data = json.load(f)
+
+        self._known_names = list(face_data.keys())
+
+        if not self._known_names:
+            print("[FaceDetection] No registered faces found")
+            return
+
+        # Train recognizer from reference images
+        training_images = []
+        training_labels = []
+        label_map = {}  # index -> name
+
+        for label_idx, name in enumerate(self._known_names):
+            label_map[label_idx] = name
+            # Look for reference image
+            ref_jpg = os.path.join(known_faces_dir, f"{name}.jpg")
+            ref_png = os.path.join(known_faces_dir, f"{name}.png")
+
+            ref_image = ref_jpg if os.path.exists(ref_jpg) else ref_png
+
+            if os.path.exists(ref_image):
+                img = cv2.imread(ref_image, cv2.IMREAD_GRAYSCALE)
+                if img is not None:
+                    # Detect face in the reference image
+                    faces = self._face_cascade.detectMultiScale(
+                        img, scaleFactor=1.1, minNeighbors=5, minSize=(50, 50)
+                    )
+                    if len(faces) > 0:
+                        # Use the largest face
+                        largest = max(faces, key=lambda f: f[2] * f[3])
+                        x, y, w, h = largest
+                        face_roi = cv2.resize(img[y:y+h, x:x+w], (200, 200))
+                        training_images.append(face_roi)
+                        training_labels.append(label_idx)
+                    else:
+                        print(f"[FaceDetection] WARNING: No face found in {ref_image}")
+                else:
+                    print(f"[FaceDetection] WARNING: Could not read {ref_image}")
+            else:
+                print(f"[FaceDetection] WARNING: No reference image for '{name}'")
+
+        if training_images:
+            self._recognizer.train(training_images, np.array(training_labels))
+            self._recognizer_trained = True
+            self._label_map = label_map
+            print(
+                f"[FaceDetection] Loaded {len(self._known_names)} known faces, "
+                f"trained with {len(training_images)} images"
+            )
+        else:
+            print("[FaceDetection] WARNING: Could not train recognizer (no valid reference images)")
 
     def start(self):
         """Start the face detection loop."""
@@ -85,12 +130,6 @@ class FaceDetectionModule:
 
     def _detection_loop(self):
         """Main detection loop - captures frames and detects faces."""
-        try:
-            import face_recognition
-        except ImportError:
-            print("[FaceDetection] Cannot start: face_recognition not installed")
-            return
-
         device_index = self.camera_config.get("device_index", 0)
         cap = cv2.VideoCapture(device_index)
 
@@ -98,11 +137,9 @@ class FaceDetectionModule:
             print(f"[FaceDetection] ERROR: Cannot open camera {device_index}")
             return
 
-        fps = self.camera_config.get("fps", 30)
-        model = self.config.get("model", "hog")
-        tolerance = self.config.get("tolerance", 0.6)
+        confidence_threshold = self.config.get("confidence_threshold", 70)
 
-        print(f"[FaceDetection] Camera opened (device={device_index}, fps={fps})")
+        print(f"[FaceDetection] Camera opened (device={device_index})")
 
         # Process every Nth frame for performance
         process_every_n = 3
@@ -121,50 +158,38 @@ class FaceDetectionModule:
             if frame_count % process_every_n != 0:
                 continue
 
-            # Resize for faster processing
-            small_frame = cv2.resize(frame, (0, 0), fx=0.5, fy=0.5)
-            rgb_small = cv2.cvtColor(small_frame, cv2.COLOR_BGR2RGB)
+            # Convert to grayscale for detection
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
-            # Detect face locations
-            face_locations = face_recognition.face_locations(
-                rgb_small, model=model
+            # Detect faces using Haar Cascade
+            face_locations = self._face_cascade.detectMultiScale(
+                gray, scaleFactor=1.1, minNeighbors=5, minSize=(80, 80)
             )
 
-            if not face_locations:
-                # No faces detected - could publish FACE_LOST
+            if len(face_locations) == 0:
                 continue
 
-            # Encode detected faces
-            face_encodings = face_recognition.face_encodings(
-                rgb_small, face_locations
-            )
+            # Process each detected face
+            for (x, y, w, h) in face_locations:
+                name = "Unknown"
+                confidence = 0
 
-            for face_encoding in face_encodings:
-                # Check if face matches any known user
-                if self._known_encodings:
-                    matches = face_recognition.compare_faces(
-                        self._known_encodings, face_encoding, tolerance=tolerance
-                    )
-                    name = "Unknown"
+                if self._recognizer_trained:
+                    # Try to recognize the face
+                    face_roi = cv2.resize(gray[y:y+h, x:x+w], (200, 200))
+                    label, confidence = self._recognizer.predict(face_roi)
 
-                    if True in matches:
-                        # Use the known face with smallest distance
-                        face_distances = face_recognition.face_distance(
-                            self._known_encodings, face_encoding
-                        )
-                        best_match_idx = np.argmin(face_distances)
-                        if matches[best_match_idx]:
-                            name = self._known_names[best_match_idx]
+                    # LBPH confidence: lower is better. We invert it for clarity
+                    # confidence < 70 usually means a good match
+                    if confidence < (100 - confidence_threshold):
+                        name = self._label_map.get(label, "Unknown")
 
-                    # Publish face recognized event
-                    self._handle_face_detected(name)
-                else:
-                    # No known faces - just detect that a face exists
-                    self._handle_face_detected(None)
+                # Publish face event
+                self._handle_face_detected(name)
 
             # Optional: Show camera feed with overlays
             if self.config.get("show_camera", False):
-                self._draw_overlays(frame, face_locations, [])
+                self._draw_overlays(frame, face_locations)
                 cv2.imshow("JARVIS-AI Face Detection", frame)
                 if cv2.waitKey(1) & 0xFF == ord("q"):
                     break
@@ -197,23 +222,17 @@ class FaceDetectionModule:
                 Event(EventTypes.FACE_DETECTED, {"name": None})
             )
 
-    def _draw_overlays(self, frame, face_locations, names):
+    def _draw_overlays(self, frame, face_locations):
         """Draw bounding boxes and labels on the camera frame."""
-        # Scale back up face locations since we detected on half-size frame
-        for (top, right, bottom, left), name in zip(face_locations, names):
-            top *= 2
-            right *= 2
-            bottom *= 2
-            left *= 2
-
+        for (x, y, w, h) in face_locations:
             # Draw box
-            cv2.rectangle(frame, (left, top), (right, bottom), (0, 255, 0), 2)
-            # Draw label
+            cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
+            # Draw label background
             cv2.rectangle(
-                frame, (left, bottom - 35), (right, bottom), (0, 255, 0), cv2.FILLED
+                frame, (x, y + h - 35), (x + w, y + h), (0, 255, 0), cv2.FILLED
             )
             font = cv2.FONT_HERSHEY_DUPLEX
             cv2.putText(
-                frame, name or "Unknown", (left + 6, bottom - 6),
+                frame, "Face", (x + 6, y + h - 6),
                 font, 0.8, (255, 255, 255), 1
             )
