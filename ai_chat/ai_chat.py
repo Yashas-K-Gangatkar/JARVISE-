@@ -1,12 +1,13 @@
 """
 AI Chat Module - ChatGPT-like brain for the JARVIS AI Assistant.
 
-Supports multiple AI backends (OpenAI, Groq) with a local rule-based
+Supports multiple AI backends (Gemini, OpenAI, Groq) with a local rule-based
 fallback when no API key is configured. Integrates with the EventBus
 for seamless voice-command-driven conversations.
 
 Features:
-    - OpenAI API (GPT-3.5 / GPT-4) — primary backend
+    - Google Gemini API (free tier: 15 RPM, generous quota) — primary backend
+    - OpenAI API (GPT-3.5 / GPT-4) — alternative backend
     - Groq API — free, fast alternative
     - Local fallback — rule-based responses (no API key needed)
     - Conversation memory (configurable history length)
@@ -495,7 +496,8 @@ class AIChatModule:
         # Default fallback
         return (
             "I'm currently in offline mode. For full AI conversation, "
-            "please add an OpenAI or Groq API key to your config."
+            "please add a Gemini API key to your config.yaml file. "
+            "You can get a free key at aistudio.google.com/apikey."
         )
 
     @staticmethod

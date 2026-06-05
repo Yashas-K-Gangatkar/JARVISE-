@@ -50,9 +50,11 @@ preferences:
     - "science"
   greeting_style: "formal"  # "formal" or "casual"
 
-# === NEW: AI Chat Brain ===
+# === AI Chat Brain ===
 ai_chat:
-  provider: "local"  # "openai", "groq", or "local" (no API key needed)
+  provider: "gemini"  # "gemini" (recommended, free tier), "openai", "groq", or "local" (no API key)
+  gemini_api_key: ""  # Get FREE key at aistudio.google.com/apikey
+  gemini_model: "gemini-2.0-flash"
   openai_api_key: ""  # Get key at platform.openai.com
   openai_model: "gpt-3.5-turbo"
   groq_api_key: ""  # Get free key at console.groq.com

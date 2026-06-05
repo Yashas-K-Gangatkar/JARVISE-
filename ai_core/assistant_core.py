@@ -561,10 +561,11 @@ class AssistantCore:
         self.event_bus.publish(
             Event(EventTypes.SPEAK_REQUEST, {
                 "text": (
-                    "You can ask me for: news, stocks, project status, "
-                    "the current time, today's date, the weather, "
-                    "or ask me to open an application like notepad, "
-                    "chrome, or calculator. Say stop to end the session."
+                    "You can ask me anything! I use AI to answer your questions "
+                    "from the internet. You can also ask me for: news, stocks, "
+                    "project status, the current time, today's date, the weather, "
+                    "or ask me to open an application like notepad, chrome, or "
+                    "calculator. Say stop to end the session."
                 )
             })
         )

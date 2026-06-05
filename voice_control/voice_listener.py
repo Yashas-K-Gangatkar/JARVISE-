@@ -3,6 +3,13 @@ Voice Listener - Listens for wake word and voice commands.
 
 Uses SpeechRecognition library with Google's free API
 for speech-to-text conversion.
+
+Features:
+    - Wake word detection
+    - Continuous listening in background thread
+    - Command parsing with keyword matching
+    - Configurable listen timeout
+    - TTS feedback loop prevention (mutes mic while JARVIS speaks)
 """
 
 import threading
@@ -18,7 +25,40 @@ class VoiceControlModule:
     - Continuous listening in background thread
     - Command parsing with keyword matching
     - Configurable listen timeout
+    - TTS feedback loop prevention: ignores microphone input while
+      JARVIS is speaking, so the mic doesn't pick up its own TTS
+      output and mistake it for a command.
     """
+
+    # Phrases that JARVIS itself speaks — if the mic picks these up,
+    # they should be ignored to prevent the feedback loop.
+    _TTS_OWN_PHRASES = [
+        "yes how can i help you",
+        "how can i help you",
+        "i can help you",
+        "fetching today's news",
+        "checking stock market",
+        "loading project status",
+        "hello how can i help",
+        "good morning",
+        "good afternoon",
+        "good evening",
+        "jarvis is online",
+        "at your service",
+        "confirmed",
+        "cancelled",
+        "paused",
+        "volume up",
+        "volume down",
+        "microphone muted",
+        "i encountered a problem",
+        "sorry i didn't catch that",
+        "user left going to standby",
+        "which application would you like",
+        "i'm sorry i don't know how to open",
+        "i couldn't find",
+        "i had trouble opening",
+    ]
 
     def __init__(self, event_bus, config):
         self.event_bus = event_bus
@@ -30,6 +70,19 @@ class VoiceControlModule:
         self._listen_timeout = self.config.get("listen_timeout", 10)
         self._phrase_limit = self.config.get("phrase_limit", 10)
 
+        # ── TTS Feedback Loop Prevention ──────────────────────────────
+        # When JARVIS speaks, we set _tts_speaking = True so the mic
+        # listener ignores any audio during that time.  A timer resets
+        # the flag after the estimated speech duration has elapsed.
+        self._tts_speaking = False
+        self._tts_lock = threading.Lock()
+        self._tts_timer = None
+
+        # Post-speech cooldown: after TTS finishes, wait a short gap
+        # before resuming mic listening.  This prevents the tail-end of
+        # the TTS output from being captured.
+        self._post_speech_cooldown = 0.8  # seconds
+
     def start(self):
         """Start the voice control module."""
         self._running = True
@@ -37,14 +90,81 @@ class VoiceControlModule:
             target=self._listening_loop, daemon=True, name="VoiceControl"
         )
         self._thread.start()
+
+        # Subscribe to SPEAK_REQUEST events to track when JARVIS is speaking
+        from ai_core.event_bus import EventTypes
+        self.event_bus.subscribe(EventTypes.SPEAK_REQUEST, self._on_speak_request)
+
         print("[VoiceControl] Started - Say 'Jarvis' to activate")
 
     def stop(self):
         """Stop the voice control module."""
         self._running = False
+        if self._tts_timer is not None:
+            self._tts_timer.cancel()
+            self._tts_timer = None
         if self._thread:
             self._thread.join(timeout=3)
         print("[VoiceControl] Stopped")
+
+    # ── TTS Feedback Loop Prevention ─────────────────────────────────
+
+    def _on_speak_request(self, event):
+        """
+        Handle SPEAK_REQUEST events from the EventBus.
+
+        When JARVIS is about to speak, we mute the microphone listener
+        for the estimated duration of the speech plus a small cooldown.
+        This prevents the mic from picking up JARVIS's own voice and
+        treating it as a user command (the feedback loop problem).
+        """
+        text = event.data.get("text", "")
+        if not text:
+            return
+
+        # Estimate speech duration: average ~150 words/min + buffer
+        word_count = len(text.split())
+        duration = max(2.0, (word_count / 150.0) * 60.0 + 1.5)
+
+        with self._tts_lock:
+            self._tts_speaking = True
+            # Cancel any existing timer
+            if self._tts_timer is not None:
+                self._tts_timer.cancel()
+            # Set a timer to unmute after speech finishes + cooldown
+            self._tts_timer = threading.Timer(
+                duration + self._post_speech_cooldown,
+                self._tts_speaking_finished
+            )
+            self._tts_timer.daemon = True
+            self._tts_timer.start()
+
+    def _tts_speaking_finished(self):
+        """Called when the estimated TTS speech duration has elapsed."""
+        with self._tts_lock:
+            self._tts_speaking = False
+            self._tts_timer = None
+
+    def _is_tts_speaking(self) -> bool:
+        """Check if TTS is currently speaking (mic should be muted)."""
+        with self._tts_lock:
+            return self._tts_speaking
+
+    def _is_tts_own_phrase(self, text: str) -> bool:
+        """
+        Check if the recognized text matches something JARVIS itself said.
+
+        This is a second line of defense against the feedback loop — even
+        if the timing-based mute doesn't perfectly cover the TTS output,
+        known TTS phrases are filtered out.
+        """
+        text_lower = text.lower().strip()
+        for phrase in self._TTS_OWN_PHRASES:
+            if phrase in text_lower:
+                return True
+        return False
+
+    # ── Main Listening Loop ──────────────────────────────────────────
 
     def _listening_loop(self):
         """Main listening loop."""
@@ -66,6 +186,13 @@ class VoiceControlModule:
 
         while self._running:
             try:
+                # ── Skip listening while JARVIS is speaking ───────────
+                # This is the primary feedback-loop prevention: we simply
+                # don't listen to the mic at all while TTS is active.
+                if self._is_tts_speaking():
+                    time.sleep(0.3)
+                    continue
+
                 # Listen for wake word
                 with microphone as source:
                     audio = recognizer.listen(source, timeout=5, phrase_time_limit=3)
@@ -74,6 +201,11 @@ class VoiceControlModule:
                 try:
                     text = recognizer.recognize_google(audio).lower()
                     print(f"[VoiceControl] Heard: '{text}'")
+
+                    # Filter out TTS own phrases (feedback loop defense #2)
+                    if self._is_tts_own_phrase(text):
+                        print(f"[VoiceControl] Ignoring TTS feedback: '{text}'")
+                        continue
 
                     # Check for wake word
                     if self._wake_word in text:
@@ -116,6 +248,17 @@ class VoiceControlModule:
         print(f"[VoiceControl] Listening for command ({self._listen_timeout}s)...")
 
         try:
+            # ── Wait for TTS to finish before listening ──────────────
+            # After the wake word, JARVIS says "Yes, how can I help you?"
+            # We need to wait for that TTS to complete before we start
+            # listening for the actual command.
+            tts_wait = 0
+            while self._is_tts_speaking() and tts_wait < 8:
+                time.sleep(0.3)
+                tts_wait += 0.3
+            # Small extra pause to let the microphone settle
+            time.sleep(0.3)
+
             with microphone as source:
                 audio = recognizer.listen(
                     source,
@@ -125,6 +268,11 @@ class VoiceControlModule:
 
             text = recognizer.recognize_google(audio).lower()
             print(f"[VoiceControl] Command: '{text}'")
+
+            # Filter out TTS own phrases (feedback loop defense #2)
+            if self._is_tts_own_phrase(text):
+                print(f"[VoiceControl] Ignoring TTS feedback in command: '{text}'")
+                return
 
             # Parse the command
             command, params = self._parse_command(text)
@@ -172,5 +320,5 @@ class VoiceControlModule:
                 if keyword in text_words or keyword in text:
                     return command, {"raw_text": text}
 
-        # Unknown command
+        # Unknown command → will be routed to AI Chat by AssistantCore
         return "unknown", {"raw_text": text}
