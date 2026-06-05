@@ -1,0 +1,51 @@
+# JARVIS-AI Configuration File
+# Copy this file to config.yaml and fill in your settings.
+
+camera:
+  device_index: 0
+  fps: 30
+
+face_recognition:
+  model: "hog"  # "hog" (faster) or "cnn" (more accurate, needs GPU)
+  tolerance: 0.6
+  greeting_cooldown_seconds: 300
+  known_faces_dir: "known_faces"
+
+gesture:
+  hold_duration_seconds: 0.5
+  confidence_threshold: 0.8
+  max_num_hands: 1
+
+voice:
+  wake_word: "jarvis"
+  listen_timeout: 10
+  phrase_limit: 10
+  recognizer_engine: "google"  # "google", "sphinx", or "whisper"
+
+tts:
+  engine: "pyttsx3"  # "pyttsx3" (offline) or "gtts" (online, better quality)
+  rate: 180
+  volume: 1.0
+
+dashboard:
+  type: "tkinter"  # "tkinter" or "flask"
+  refresh_interval_seconds: 30
+
+data:
+  news_api_key: "YOUR_NEWSAPI_KEY_HERE"  # Get free key at newsapi.org
+  stock_symbols:
+    - "AAPL"
+    - "GOOGL"
+    - "MSFT"
+    - "AMZN"
+    - "TSLA"
+  project_status_file: "project_status.json"
+  cache_duration_minutes: 30
+
+preferences:
+  user_name: "User"
+  news_categories:
+    - "technology"
+    - "business"
+    - "science"
+  greeting_style: "formal"  # "formal" or "casual"
