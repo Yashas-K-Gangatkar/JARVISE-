@@ -99,6 +99,12 @@ class AssistantCore:
         # Startup data fetched flag
         self._startup_data_fetched = False
 
+        # Gesture cooldown — ignore the same gesture if it fires again
+        # within this many seconds (prevents rapid-fire spam)
+        self._gesture_cooldown_seconds = 5.0
+        self._last_gesture_time = 0.0
+        self._last_gesture_name = ""
+
         # Detect current OS for app launching
         import platform
         self._os_name = platform.system().lower()  # 'windows', 'linux', 'darwin'
@@ -301,6 +307,17 @@ class AssistantCore:
         """Handle gesture detected event."""
         if self.state_manager.current in (AssistantState.ACTIVE, AssistantState.LISTENING):
             gesture = event.data.get("gesture", "unknown")
+
+            # Cooldown: ignore the same gesture if it fired very recently.
+            # This prevents the MediaPipe detector from spamming "Confirmed."
+            # or "Cancelled." every frame when a hand is held in view.
+            now = time.time()
+            if (gesture == self._last_gesture_name
+                    and now - self._last_gesture_time < self._gesture_cooldown_seconds):
+                return  # skip — same gesture too soon
+            self._last_gesture_time = now
+            self._last_gesture_name = gesture
+
             self._process_gesture(gesture)
 
     # ── Voice Handlers ──
@@ -486,11 +503,19 @@ class AssistantCore:
                 print(f"[Core] Command '{command}' failed: {e}")
                 self._attempt_error_recovery(command, e)
         else:
-            self.event_bus.publish(
-                Event(EventTypes.SPEAK_REQUEST, {
-                    "text": f"Sorry, I don't understand the command: {command}"
-                })
-            )
+            # Unknown command → route to AI chat so the user's question
+            # still gets answered instead of getting "I don't understand".
+            # Re-publish as a "chat" VOICE_COMMAND which the AIChatModule
+            # will pick up.
+            raw_text = (params or {}).get("raw_text", command)
+            if raw_text:
+                self.event_bus.publish(
+                    Event(EventTypes.VOICE_COMMAND, {
+                        "text": raw_text,
+                        "command": "chat",
+                        "params": {"raw_text": raw_text},
+                    })
+                )
 
         # Return to active state (unless stop was requested)
         if command != "stop" and self.state_manager.current == AssistantState.PROCESSING:

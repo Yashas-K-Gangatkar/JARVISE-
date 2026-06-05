@@ -90,7 +90,9 @@ _DEFAULT_CONFIG: dict = {
         "greeting_style": "formal",
     },
     "ai_chat": {
-        "provider": "local",
+        "provider": "gemini",
+        "gemini_api_key": "",
+        "gemini_model": "gemini-2.0-flash",
         "openai_api_key": "",
         "openai_model": "gpt-3.5-turbo",
         "groq_api_key": "",

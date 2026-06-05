@@ -60,11 +60,12 @@ class AIChatModule:
     """
     AI chat module that provides conversational intelligence to JARVIS.
 
-    Subscribes to VOICE_COMMAND events (command == "chat") and responds
-    by sending the user's text to the configured AI backend, then
+    Subscribes to VOICE_COMMAND events (command == "chat" or "unknown") and
+    responds by sending the user's text to the configured AI backend, then
     publishing the response via SPEAK_REQUEST and DASHBOARD_UPDATE events.
 
     Supported providers:
+        - "gemini":  Google Gemini API (free tier: 15 RPM, generous quota)
         - "openai": OpenAI ChatGPT (gpt-3.5-turbo, gpt-4, etc.)
         - "groq":   Groq API (llama3-8b-8192, etc.)
         - "local":  Built-in rule-based fallback (no API key required)
@@ -72,7 +73,9 @@ class AIChatModule:
 
     # Default configuration values
     _DEFAULTS = {
-        "provider": "openai",
+        "provider": "gemini",
+        "gemini_api_key": "",
+        "gemini_model": "gemini-2.0-flash",
         "openai_api_key": "",
         "openai_model": "gpt-3.5-turbo",
         "groq_api_key": "",
@@ -232,7 +235,14 @@ class AIChatModule:
 
     def _validate_provider(self):
         """Validate that the chosen provider has the required API key."""
-        if self._provider == "openai":
+        if self._provider == "gemini":
+            if not self._config.get("gemini_api_key"):
+                logger.warning(
+                    "No Gemini API key configured — falling back to local mode"
+                )
+                print("[AIChat] No Gemini API key — falling back to local mode")
+                self._provider = "local"
+        elif self._provider == "openai":
             if not self._config.get("openai_api_key"):
                 logger.warning(
                     "No OpenAI API key configured — falling back to local mode"
@@ -249,13 +259,42 @@ class AIChatModule:
 
     def _get_active_model(self) -> str:
         """Return the model name for the active provider."""
-        if self._provider == "openai":
+        if self._provider == "gemini":
+            return self._config["gemini_model"]
+        elif self._provider == "openai":
             return self._config["openai_model"]
         elif self._provider == "groq":
             return self._config["groq_model"]
         return "local"
 
     # ── Private: Client Initialization ─────────────────────────────────
+
+    def _init_gemini_client(self):
+        """Lazily initialise the Google Gemini client."""
+        if hasattr(self, '_gemini_configured') and self._gemini_configured:
+            return True
+        try:
+            import google.generativeai as genai
+            genai.configure(api_key=self._config["gemini_api_key"])
+            self._gemini_configured = True
+            self._gemini_model = genai.GenerativeModel(
+                model_name=self._config["gemini_model"],
+                system_instruction=build_system_message(
+                    user_name=self._user_name,
+                    last_command=self._last_command or None,
+                    weather_info=self._weather_info or None,
+                ),
+            )
+            logger.info("Gemini client initialised (model=%s)", self._config["gemini_model"])
+            return True
+        except ImportError:
+            logger.error("google-generativeai package not installed — run: pip install google-generativeai")
+            print("[AIChat] ERROR: google-generativeai package not installed. Run: pip install google-generativeai")
+            return False
+        except Exception as exc:
+            logger.error("Failed to init Gemini client: %s", exc)
+            print(f"[AIChat] ERROR: Gemini client init failed — {exc}")
+            return False
 
     def _init_openai_client(self):
         """Lazily initialise the OpenAI client."""
@@ -312,7 +351,9 @@ class AIChatModule:
             # Add user message to history
             self._append_to_history("user", message)
 
-            if self._provider == "openai":
+            if self._provider == "gemini":
+                response = self._call_gemini()
+            elif self._provider == "openai":
                 response = self._call_openai()
             elif self._provider == "groq":
                 response = self._call_groq()
@@ -332,6 +373,43 @@ class AIChatModule:
                 "Let me try that again."
             )
             self._publish_response(error_msg, user_message=message)
+
+    # ── Private: Gemini Backend ───────────────────────────────────────
+
+    def _call_gemini(self) -> str:
+        """Call the Google Gemini API."""
+        if not self._init_gemini_client():
+            return self._call_local("(Gemini unavailable — local fallback)")
+
+        try:
+            import google.generativeai as genai
+
+            # Build conversation history for Gemini
+            gemini_history = []
+            with self._history_lock:
+                for msg in self._history[:-1]:  # all except the last (which is the current user msg)
+                    role = "user" if msg["role"] == "user" else "model"
+                    gemini_history.append({"role": role, "parts": [msg["content"]]})
+
+            # Start a chat with history
+            chat = self._gemini_model.start_chat(history=gemini_history)
+
+            # Send the latest user message
+            user_msg = self._history[-1]["content"] if self._history else "Hello"
+            response = chat.send_message(
+                user_msg,
+                generation_config=genai.types.GenerationConfig(
+                    max_output_tokens=self._config["max_tokens"],
+                    temperature=self._config["temperature"],
+                ),
+            )
+            content = response.text.strip()
+            logger.debug("Gemini response: %s", content[:100])
+            return content
+        except Exception as exc:
+            logger.error("Gemini API error: %s", exc)
+            print(f"[AIChat] Gemini API error: {exc}")
+            return self._call_local("(Gemini error — local fallback)")
 
     # ── Private: OpenAI Backend ────────────────────────────────────────
 
@@ -529,7 +607,9 @@ class AIChatModule:
         """
         Handle VOICE_COMMAND events.
 
-        Only processes commands with type "chat". The user's text is
+        Processes commands with type "chat" or "unknown". This ensures
+        that ANY question the user asks gets routed to the AI, not just
+        those starting with the "chat" keyword.  The user's text is
         taken from event.data["text"] (the raw recognised speech).
         """
         if not self._running:
@@ -537,8 +617,11 @@ class AIChatModule:
 
         command = event.data.get("command", "")
 
-        # Route "chat" commands to our AI chat
-        if command == "chat":
+        # Route both "chat" and "unknown" commands to the AI.
+        # "unknown" means the voice parser didn't match any keyword,
+        # which is exactly the case when the user asks a free-form
+        # question like "What is the capital of France?"
+        if command in ("chat", "unknown"):
             text = event.data.get("text", "")
             if not text:
                 # Try params as a fallback source
@@ -546,7 +629,7 @@ class AIChatModule:
                 text = params.get("raw_text", "")
 
             if text:
-                # Strip the "chat" keyword prefix if present
+                # Strip leading command keywords if present
                 cleaned = re.sub(r'^\s*(chat|ask|talk|question)\s+', '', text, flags=re.IGNORECASE)
                 self.chat(cleaned)
             else:
