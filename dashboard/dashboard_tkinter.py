@@ -57,8 +57,8 @@ class GlowButton(tk.Canvas):
         self._accent = accent
         self._font_size = font_size
         self._hover = False
-        self._w = width
-        self._h = height
+        self._cw = width
+        self._ch = height
         self._r = 8  # corner radius
         # Defer drawing until the widget is fully initialised in Tcl/Tk.
         # Calling delete("all") during __init__ causes TclError on some
@@ -84,14 +84,14 @@ class GlowButton(tk.Canvas):
         pad = 2
         # Glow border (outer)
         glow_col = self._accent if self._hover else Colors.DIVIDER
-        self._round_rect(pad, pad, self._w - pad, self._h - pad,
+        self._round_rect(pad, pad, self._cw - pad, self._ch - pad,
                          self._r, outline=glow_col, width=2)
         # Fill
         fill = Colors.BG_TERTIARY if not self._hover else Colors.BG_SECONDARY
-        self._round_rect(pad + 1, pad + 1, self._w - pad - 1, self._h - pad - 1,
+        self._round_rect(pad + 1, pad + 1, self._cw - pad - 1, self._ch - pad - 1,
                          self._r - 1, fill=fill, outline="")
         # Text
-        self.create_text(self._w // 2, self._h // 2, text=self._text,
+        self.create_text(self._cw // 2, self._ch // 2, text=self._text,
                          fill=self._fg, font=("Consolas", self._font_size, "bold"))
 
     def _round_rect(self, x1, y1, x2, y2, r, **kwargs):
@@ -136,8 +136,8 @@ class GlowProgressBar(tk.Canvas):
                  bar_color=Colors.ACCENT_CYAN, **kwargs):
         super().__init__(parent, width=width, height=height,
                          bg=Colors.BG_PRIMARY, highlightthickness=0, **kwargs)
-        self._w = width
-        self._h = height
+        self._cw = width
+        self._ch = height
         self._progress = max(0.0, min(1.0, progress))
         self._bar_color = bar_color
         self._r = 6
@@ -161,20 +161,20 @@ class GlowProgressBar(tk.Canvas):
             return
         pad = 2
         # Track
-        self._round_rect(pad, pad, self._w - pad, self._h - pad,
+        self._round_rect(pad, pad, self._cw - pad, self._ch - pad,
                          self._r, fill=Colors.BG_TERTIARY, outline=Colors.DIVIDER, width=1)
         # Fill
-        fill_w = pad + int((self._w - 2 * pad) * self._progress)
+        fill_w = pad + int((self._cw - 2 * pad) * self._progress)
         if fill_w > pad + 2:
-            self._round_rect(pad + 1, pad + 1, fill_w, self._h - pad - 1,
+            self._round_rect(pad + 1, pad + 1, fill_w, self._ch - pad - 1,
                              self._r - 1, fill=self._bar_color, outline="")
             # Glow overlay (semi-transparent simulation via lighter color)
             glow = self._lighten(self._bar_color, 0.35)
-            self._round_rect(pad + 1, pad + 1, fill_w, pad + self._h // 3,
+            self._round_rect(pad + 1, pad + 1, fill_w, pad + self._ch // 3,
                              self._r - 1, fill=glow, outline="")
         # Percentage text
         pct = f"{int(self._progress * 100)}%"
-        self.create_text(self._w // 2, self._h // 2, text=pct,
+        self.create_text(self._cw // 2, self._ch // 2, text=pct,
                          fill=Colors.TEXT_PRIMARY, font=("Consolas", 9, "bold"))
 
     def _round_rect(self, x1, y1, x2, y2, r, **kwargs):
@@ -205,8 +205,8 @@ class HUDArcCanvas(tk.Canvas):
     def __init__(self, parent, width=200, height=200, **kwargs):
         super().__init__(parent, width=width, height=height,
                          bg=Colors.BG_PRIMARY, highlightthickness=0, **kwargs)
-        self._w = width
-        self._h = height
+        self._cw = width
+        self._ch = height
         self._cx = width // 2
         self._cy = height // 2
         self._angle_offset = 0.0
