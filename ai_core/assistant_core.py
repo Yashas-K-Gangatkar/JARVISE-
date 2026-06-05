@@ -31,7 +31,7 @@ import requests
 from .event_bus import EventBus, Event, EventTypes
 from .state_manager import StateManager
 from .preferences import Preferences
-from face_recognition.greeting_engine import GreetingEngine
+from face_engine.greeting_engine import GreetingEngine
 
 logger = logging.getLogger(__name__)
 

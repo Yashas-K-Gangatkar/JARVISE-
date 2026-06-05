@@ -17,7 +17,7 @@ import json
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from face_recognition.face_encoder import register_face
+from face_engine.face_encoder import register_face
 import argparse
 
 

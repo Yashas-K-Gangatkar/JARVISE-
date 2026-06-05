@@ -369,7 +369,7 @@ class JarvisApp:
             _print_status("Face Detection", "skip", "--no-camera flag")
         else:
             try:
-                from face_recognition.face_detection import FaceDetectionModule
+                from face_engine.face_detection import FaceDetectionModule
                 self.face_module = FaceDetectionModule(self.event_bus, self.config)
                 self.assistant_core.register_module("face_detection", self.face_module)
                 _print_status("Face Detection", "ok")
