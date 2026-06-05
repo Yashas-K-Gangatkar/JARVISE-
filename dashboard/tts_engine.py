@@ -96,6 +96,7 @@ class TTSEngine:
 
     def _try_init_pyttsx3(self) -> bool:
         """Attempt to initialise pyttsx3.  Returns True on success."""
+        import platform
         try:
             import pyttsx3
 
@@ -107,7 +108,10 @@ class TTSEngine:
             if self._voice_preference:
                 self._apply_voice_preference(self._voice_preference)
 
-            print("[TTS] Initialized pyttsx3 engine")
+            if platform.system() == "Darwin":
+                print("[TTS] Initialized pyttsx3 engine (macOS: will use 'say' command for speech)")
+            else:
+                print("[TTS] Initialized pyttsx3 engine")
             return True
 
         except ImportError:
@@ -404,10 +408,61 @@ class TTSEngine:
         else:
             self._speak_console(text)
 
+    # ── macOS 'say' Backend ────────────────────────────────────────────
+
+    def _speak_macos_say(self, text: str):
+        """Speak using the macOS built-in ``say`` command.
+
+        The ``say`` command uses NSSpeechSynthesizer (the same engine
+        as pyttsx3 on macOS) but runs in a subprocess, so it never
+        conflicts with tkinter's NSRunLoop on the main thread.
+        """
+        try:
+            cmd = ["say"]
+            # Apply voice preference if set
+            if self._voice_preference:
+                voice_map = {"male": "Alex", "female": "Samantha"}
+                voice = voice_map.get(self._voice_preference.lower())
+                if voice:
+                    cmd.extend(["-v", voice])
+            # Set speech rate (macOS 'say' uses words per minute)
+            cmd.extend(["-r", str(self._rate)])
+            cmd.append(text)
+
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            with self._process_lock:
+                self._current_process = proc
+            proc.wait()
+            with self._process_lock:
+                self._current_process = None
+        except FileNotFoundError:
+            # 'say' not found (shouldn't happen on macOS)
+            self._speak_console(text)
+        except Exception as exc:
+            print(f"[TTS] macOS 'say' error: {exc}")
+            self._speak_console(text)
+
     # ── pyttsx3 Backend ────────────────────────────────────────────────
 
     def _speak_pyttsx3(self, text: str):
-        """Speak using pyttsx3 (offline)."""
+        """Speak using pyttsx3 (offline), or macOS 'say' as a workaround.
+
+        On macOS, pyttsx3's ``runAndWait()`` uses the Cocoa NSRunLoop
+        which conflicts with tkinter's ``mainloop()`` — both fight for
+        the main thread's run loop, causing tkinter to exit.  We work
+        around this by delegating to the native ``say`` command on
+        macOS, which uses the same speech synthesizer but runs in a
+        subprocess and never touches the main run loop.
+        """
+        import platform
+        if platform.system() == "Darwin":
+            self._speak_macos_say(text)
+            return
+
         try:
             self._engine.say(text)
             self._engine.runAndWait()
