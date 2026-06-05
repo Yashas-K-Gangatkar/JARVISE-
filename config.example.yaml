@@ -49,3 +49,89 @@ preferences:
     - "business"
     - "science"
   greeting_style: "formal"  # "formal" or "casual"
+
+# === NEW: AI Chat Brain ===
+ai_chat:
+  provider: "local"  # "openai", "groq", or "local" (no API key needed)
+  openai_api_key: ""  # Get key at platform.openai.com
+  openai_model: "gpt-3.5-turbo"
+  groq_api_key: ""  # Get free key at console.groq.com
+  groq_model: "llama3-8b-8192"
+  max_history: 20
+  max_tokens: 1000
+  temperature: 0.7
+  rate_limit_per_minute: 30
+
+# === NEW: Reminders & Alerts ===
+reminders:
+  data_file: "reminders/reminder_data.json"
+  check_interval_seconds: 30
+  daily_briefing_time: "08:00"
+  sleep_hours_start: 23
+  sleep_hours_end: 7
+  briefing_enabled: true
+
+# === NEW: Smart Home Control ===
+smart_home:
+  mode: "simulation"  # "simulation" (no hardware needed) or "home_assistant"
+  home_assistant_url: "http://localhost:8123"
+  home_assistant_token: ""
+  rooms:
+    living_room:
+      devices:
+        - name: "Main Light"
+          type: "light"
+        - name: "TV"
+          type: "switch"
+        - name: "AC"
+          type: "fan"
+    bedroom:
+      devices:
+        - name: "Light"
+          type: "light"
+        - name: "Fan"
+          type: "fan"
+    kitchen:
+      devices:
+        - name: "Light"
+          type: "light"
+    front_door:
+      devices:
+        - name: "Door Lock"
+          type: "lock"
+
+# === NEW: Screen Control ===
+screen_control:
+  enabled: true
+  safe_mode: true
+  mouse_speed: 0.5
+  fail_safe: true
+  screenshot_dir: "screenshots"
+
+# === NEW: Email & Calendar ===
+email_calendar:
+  email_enabled: false
+  calendar_enabled: true
+  email:
+    provider: "gmail"  # "gmail", "outlook", "yahoo"
+    address: ""  # your email address
+    app_password: ""  # Google App Password (NOT your real password!)
+    imap_server: "imap.gmail.com"
+    smtp_server: "smtp.gmail.com"
+    smtp_port: 587
+  calendar:
+    type: "local"  # "local" (JSON file) or "google"
+    data_file: "calendar_events.json"
+    reminder_minutes_before: 15
+    default_event_duration_minutes: 60
+  demo:
+    sample_emails:
+      - from: "professor@university.edu"
+        subject: "Project Review Meeting"
+        body: "Hi, your project review is scheduled for next Monday at 10 AM."
+      - from: "team@project.com"
+        subject: "Sprint Update"
+        body: "Great progress this week! Let's discuss next steps tomorrow."
+      - from: "library@university.edu"
+        subject: "Book Due Date Reminder"
+        body: "Your book 'Python Crash Course' is due in 3 days."

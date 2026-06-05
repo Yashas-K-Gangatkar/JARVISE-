@@ -89,6 +89,56 @@ _DEFAULT_CONFIG: dict = {
         "news_categories": ["technology", "business", "science"],
         "greeting_style": "formal",
     },
+    "ai_chat": {
+        "provider": "local",
+        "openai_api_key": "",
+        "openai_model": "gpt-3.5-turbo",
+        "groq_api_key": "",
+        "groq_model": "llama3-8b-8192",
+        "max_history": 20,
+        "max_tokens": 1000,
+        "temperature": 0.7,
+        "rate_limit_per_minute": 30,
+    },
+    "reminders": {
+        "data_file": "reminders/reminder_data.json",
+        "check_interval_seconds": 30,
+        "daily_briefing_time": "08:00",
+        "sleep_hours_start": 23,
+        "sleep_hours_end": 7,
+        "briefing_enabled": True,
+    },
+    "smart_home": {
+        "mode": "simulation",
+        "home_assistant_url": "http://localhost:8123",
+        "home_assistant_token": "",
+        "rooms": {},
+    },
+    "screen_control": {
+        "enabled": True,
+        "safe_mode": True,
+        "mouse_speed": 0.5,
+        "fail_safe": True,
+        "screenshot_dir": "screenshots",
+    },
+    "email_calendar": {
+        "email_enabled": False,
+        "calendar_enabled": True,
+        "email": {
+            "provider": "gmail",
+            "address": "",
+            "app_password": "",
+            "imap_server": "imap.gmail.com",
+            "smtp_server": "smtp.gmail.com",
+            "smtp_port": 587,
+        },
+        "calendar": {
+            "type": "local",
+            "data_file": "calendar_events.json",
+            "reminder_minutes_before": 15,
+            "default_event_duration_minutes": 60,
+        },
+    },
 }
 
 
@@ -285,6 +335,11 @@ class JarvisApp:
         self.gesture_module = None
         self.voice_module = None
         self.data_manager = None
+        self.ai_chat_module = None
+        self.reminder_module = None
+        self.smart_home_module = None
+        self.screen_control_module = None
+        self.email_calendar_module = None
         self.tts_engine = None
         self.tts_bridge = None
         self.dashboard = None
@@ -358,6 +413,56 @@ class JarvisApp:
             self.log.warning("DataManager init failed: %s", exc)
             _print_status("Data Manager", "fail", str(exc))
 
+        # ── AI Chat ────────────────────────────────────────────────
+        try:
+            from ai_chat import AIChatModule
+            self.ai_chat_module = AIChatModule(self.event_bus, self.config)
+            self.assistant_core.register_module("ai_chat", self.ai_chat_module)
+            _print_status("AI Chat", "ok", self.config.get("ai_chat", {}).get("provider", "local"))
+        except Exception as exc:
+            self.log.warning("AIChat init failed: %s", exc)
+            _print_status("AI Chat", "fail", str(exc))
+
+        # ── Reminders & Alerts ──────────────────────────────────────
+        try:
+            from reminders import ReminderModule
+            self.reminder_module = ReminderModule(self.event_bus, self.config)
+            self.assistant_core.register_module("reminders", self.reminder_module)
+            _print_status("Reminders & Alerts", "ok")
+        except Exception as exc:
+            self.log.warning("ReminderModule init failed: %s", exc)
+            _print_status("Reminders & Alerts", "fail", str(exc))
+
+        # ── Smart Home Control ──────────────────────────────────────
+        try:
+            from smart_home import SmartHomeModule
+            self.smart_home_module = SmartHomeModule(self.event_bus, self.config)
+            self.assistant_core.register_module("smart_home", self.smart_home_module)
+            _print_status("Smart Home", "ok", self.config.get("smart_home", {}).get("mode", "simulation"))
+        except Exception as exc:
+            self.log.warning("SmartHomeModule init failed: %s", exc)
+            _print_status("Smart Home", "fail", str(exc))
+
+        # ── Screen Control ──────────────────────────────────────────
+        try:
+            from screen_control import ScreenControlModule
+            self.screen_control_module = ScreenControlModule(self.event_bus, self.config)
+            self.assistant_core.register_module("screen_control", self.screen_control_module)
+            _print_status("Screen Control", "ok")
+        except Exception as exc:
+            self.log.warning("ScreenControlModule init failed: %s", exc)
+            _print_status("Screen Control", "fail", str(exc))
+
+        # ── Email & Calendar ────────────────────────────────────────
+        try:
+            from email_calendar import EmailCalendarModule
+            self.email_calendar_module = EmailCalendarModule(self.event_bus, self.config)
+            self.assistant_core.register_module("email_calendar", self.email_calendar_module)
+            _print_status("Email & Calendar", "ok", "demo" if not self.config.get("email_calendar", {}).get("email_enabled") else "live")
+        except Exception as exc:
+            self.log.warning("EmailCalendarModule init failed: %s", exc)
+            _print_status("Email & Calendar", "fail", str(exc))
+
         # ── Dashboard ───────────────────────────────────────────────
         if self.args.no_dashboard:
             _print_status("Dashboard", "skip", "--no-dashboard flag")
@@ -429,6 +534,11 @@ class JarvisApp:
             ("Gesture Detection", self.gesture_module),
             ("Voice Control", self.voice_module),
             ("Data Manager", self.data_manager),
+            ("AI Chat", self.ai_chat_module),
+            ("Reminders", self.reminder_module),
+            ("Smart Home", self.smart_home_module),
+            ("Screen Control", self.screen_control_module),
+            ("Email & Calendar", self.email_calendar_module),
         ]
 
         for name, module in modules:
@@ -498,7 +608,12 @@ class JarvisApp:
             ("Voice Control", self.voice_module),
             ("Gesture Detection", self.gesture_module),
             ("Face Detection", self.face_module),
+            ("Reminders", self.reminder_module),
+            ("Smart Home", self.smart_home_module),
+            ("Screen Control", self.screen_control_module),
+            ("Email & Calendar", self.email_calendar_module),
             ("Data Manager", self.data_manager),
+            ("AI Chat", self.ai_chat_module),
             ("Dashboard", self.dashboard),
         ]
 

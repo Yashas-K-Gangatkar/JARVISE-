@@ -1,5 +1,5 @@
 # JARVIS-AI Dependencies
-# Install with: pip install -r requirements.txt
+# Install with: pip3 install -r requirements.txt
 
 # Core
 pyyaml>=6.0
@@ -30,10 +30,22 @@ yfinance>=0.2.28
 feedparser>=6.0.0
 beautifulsoup4>=4.12.0
 
-# Dashboard (choose one)
-# For Tkinter: built-in with Python, no install needed
-# For Flask web dashboard:
+# Dashboard
 flask>=3.0.0
+
+# === NEW: AI Chat Brain ===
+openai>=1.0.0
+groq>=0.4.0
+
+# === NEW: Reminders & Alerts ===
+python-dateutil>=2.8.0
+
+# === NEW: Screen Control ===
+pyautogui>=0.9.54
+pyperclip>=1.8.2
+
+# === NEW: Email & Calendar ===
+# IMAP/SMTP are built-in Python libraries (imaplib, smtplib, email)
 
 # Testing
 pytest>=7.4.0
