@@ -81,7 +81,29 @@ class TTSEngine:
     # ── Engine Initialisation (with fallback chain) ────────────────────
 
     def _initialize_engine(self):
-        """Initialise the chosen TTS backend, falling back gracefully."""
+        """Initialise the chosen TTS backend, falling back gracefully.
+
+        On macOS (Darwin), pyttsx3.init() creates an NSSpeechSynthesizer
+        object which partially initialises the Cocoa NSApplication.  When
+        tkinter.Tk() is created later it tries to take over the NSRunLoop,
+        but the NSApplication singleton is already partially initialised,
+        causing tkinter's mainloop() to exit immediately.  To avoid this
+        conflict we skip pyttsx3 entirely on macOS and use the native
+        ``say`` command (same speech synthesiser, but in a subprocess that
+        never touches the main thread's run loop).
+        """
+        import platform
+
+        if platform.system() == "Darwin":
+            # On macOS, use the native 'say' command directly — no
+            # pyttsx3, no NSSpeechSynthesizer, no NSRunLoop conflict.
+            if self._check_macos_say_available():
+                self._engine_type = "macos_say"
+                print("[TTS] Active engine: macos_say (native 'say' command)")
+                return
+            else:
+                print("[TTS] WARNING: macOS 'say' command not found, falling back")
+
         if self._engine_type == "pyttsx3":
             if not self._try_init_pyttsx3():
                 print("[TTS] WARNING: pyttsx3 unavailable, falling back to gTTS")
@@ -94,9 +116,14 @@ class TTSEngine:
 
         print(f"[TTS] Active engine: {self._engine_type}")
 
+    @staticmethod
+    def _check_macos_say_available() -> bool:
+        """Return True if the macOS ``say`` command is available."""
+        import shutil
+        return shutil.which("say") is not None
+
     def _try_init_pyttsx3(self) -> bool:
         """Attempt to initialise pyttsx3.  Returns True on success."""
-        import platform
         try:
             import pyttsx3
 
@@ -108,10 +135,7 @@ class TTSEngine:
             if self._voice_preference:
                 self._apply_voice_preference(self._voice_preference)
 
-            if platform.system() == "Darwin":
-                print("[TTS] Initialized pyttsx3 engine (macOS: will use 'say' command for speech)")
-            else:
-                print("[TTS] Initialized pyttsx3 engine")
+            print("[TTS] Initialized pyttsx3 engine")
             return True
 
         except ImportError:
@@ -264,7 +288,7 @@ class TTSEngine:
             except Exception as exc:
                 print(f"[TTS] Error stopping pyttsx3: {exc}")
 
-        # Kill any gTTS playback process
+        # Kill any subprocess playback process (macos_say or gTTS)
         with self._process_lock:
             if self._current_process is not None:
                 try:
@@ -401,7 +425,9 @@ class TTSEngine:
         """Speak *text* synchronously (called from the worker thread)."""
         print(f"[TTS] Speaking: '{text}'")
 
-        if self._engine_type == "pyttsx3" and self._engine:
+        if self._engine_type == "macos_say":
+            self._speak_macos_say(text)
+        elif self._engine_type == "pyttsx3" and self._engine:
             self._speak_pyttsx3(text)
         elif self._engine_type == "gtts":
             self._speak_gtts(text)
@@ -449,20 +475,13 @@ class TTSEngine:
     # ── pyttsx3 Backend ────────────────────────────────────────────────
 
     def _speak_pyttsx3(self, text: str):
-        """Speak using pyttsx3 (offline), or macOS 'say' as a workaround.
+        """Speak using pyttsx3 (offline).
 
-        On macOS, pyttsx3's ``runAndWait()`` uses the Cocoa NSRunLoop
-        which conflicts with tkinter's ``mainloop()`` — both fight for
-        the main thread's run loop, causing tkinter to exit.  We work
-        around this by delegating to the native ``say`` command on
-        macOS, which uses the same speech synthesizer but runs in a
-        subprocess and never touches the main run loop.
+        Note: on macOS, this method should never be reached because the
+        engine is set to ``macos_say`` during initialisation.  The
+        macOS-specific NSRunLoop conflict is avoided by never creating
+        the NSSpeechSynthesizer in the first place.
         """
-        import platform
-        if platform.system() == "Darwin":
-            self._speak_macos_say(text)
-            return
-
         try:
             self._engine.say(text)
             self._engine.runAndWait()

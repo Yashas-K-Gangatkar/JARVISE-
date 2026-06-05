@@ -398,6 +398,10 @@ class DashboardModule:
         self._root.configure(bg=Colors.BG_PRIMARY)
         self._root.protocol("WM_DELETE_WINDOW", self._on_close)
 
+        # Log any uncaught exceptions in tkinter callbacks instead of
+        # silently dropping them (helps debug widget / event errors).
+        self._root.report_callback_exception = self._on_tk_error
+
         # Remove native title bar for cleaner look (optional)
         # self._root.overrideredirect(True)
 
@@ -1176,8 +1180,16 @@ class DashboardModule:
         if self._system_state != "IDLE":
             self._apply_state_change(self._system_state)
 
+    def _on_tk_error(self, exc, val, tb):
+        """Log uncaught exceptions from tkinter callbacks."""
+        import traceback
+        print("[Dashboard] Uncaught tkinter callback exception:")
+        traceback.print_exception(exc, val, tb)
+
     def _on_close(self):
         """Handle window close."""
+        if not self._running:
+            return  # prevent double-close
         self._ui_ready = False
         self.stop()
 
