@@ -32,7 +32,7 @@ dashboard:
   refresh_interval_seconds: 30
 
 data:
-  news_api_key: "YOUR_NEWSAPI_KEY_HERE"  # Get free key at newsapi.org
+  news_api_key: ""  # Get free key at newsapi.org (leave empty for sample data)
   stock_symbols:
     - "AAPL"
     - "GOOGL"

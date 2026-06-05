@@ -68,7 +68,8 @@ class DataManager:
 
         api_key = self.config.get("news_api_key", "")
 
-        if not api_key:
+        # Detect placeholder keys like "YOUR_NEWSAPI_KEY_HERE"
+        if not api_key or api_key.startswith("YOUR_") or "_KEY_HERE" in api_key.upper():
             # Use sample data if no API key
             headlines = [
                 "Sample: AI technology advances rapidly in 2026",

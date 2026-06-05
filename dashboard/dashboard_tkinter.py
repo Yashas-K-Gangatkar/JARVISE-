@@ -60,14 +60,27 @@ class GlowButton(tk.Canvas):
         self._w = width
         self._h = height
         self._r = 8  # corner radius
-        self._draw()
+        # Defer drawing until the widget is fully initialised in Tcl/Tk.
+        # Calling delete("all") during __init__ causes TclError on some
+        # Python/Tcl versions (especially Python 3.14 + macOS).
+        self.after_idle(self._draw)
         self.bind("<Enter>", self._on_enter)
         self.bind("<Leave>", self._on_leave)
         self.bind("<ButtonPress-1>", self._on_press)
         self.bind("<ButtonRelease-1>", self._on_release)
 
     def _draw(self):
-        self.delete("all")
+        try:
+            if not self.winfo_exists():
+                return
+            self.delete("all")
+        except tk.TclError:
+            # Widget not fully ready yet — retry on next idle cycle
+            try:
+                self.after_idle(self._draw)
+            except Exception:
+                pass
+            return
         pad = 2
         # Glow border (outer)
         glow_col = self._accent if self._hover else Colors.DIVIDER
@@ -128,14 +141,24 @@ class GlowProgressBar(tk.Canvas):
         self._progress = max(0.0, min(1.0, progress))
         self._bar_color = bar_color
         self._r = 6
-        self._draw()
+        # Defer drawing until widget is fully initialised
+        self.after_idle(self._draw)
 
     def set_progress(self, progress):
         self._progress = max(0.0, min(1.0, progress))
         self._draw()
 
     def _draw(self):
-        self.delete("all")
+        try:
+            if not self.winfo_exists():
+                return
+            self.delete("all")
+        except tk.TclError:
+            try:
+                self.after_idle(self._draw)
+            except Exception:
+                pass
+            return
         pad = 2
         # Track
         self._round_rect(pad, pad, self._w - pad, self._h - pad,
@@ -188,7 +211,8 @@ class HUDArcCanvas(tk.Canvas):
         self._cy = height // 2
         self._angle_offset = 0.0
         self._running = True
-        self._animate()
+        # Defer animation start until widget is fully initialised
+        self.after_idle(self._animate)
 
     def _animate(self):
         if not self._running:
@@ -198,7 +222,13 @@ class HUDArcCanvas(tk.Canvas):
         self.after(50, self._animate)
 
     def _draw_arcs(self):
-        self.delete("all")
+        try:
+            if not self.winfo_exists():
+                return
+            self.delete("all")
+        except tk.TclError:
+            self._running = False
+            return
         cx, cy = self._cx, self._cy
         # Outer ring
         self._draw_ring(cx, cy, 90, self._angle_offset, 290, Colors.ACCENT_CYAN, 2)
@@ -227,23 +257,30 @@ class ScanLineCanvas(tk.Canvas):
         super().__init__(parent, bg=Colors.BG_PRIMARY, highlightthickness=0, **kwargs)
         self._y = 0
         self._running = True
-        self._animate()
+        # Defer animation start until widget is fully initialised
+        self.after_idle(self._animate)
 
     def _animate(self):
         if not self._running:
             return
-        self.update_idletasks()
-        h = self.winfo_height()
-        if h > 1:
-            self.delete("all")
-            # Scan line
-            self.create_line(0, self._y, self.winfo_width(), self._y,
-                             fill=Colors.GLOW_CYAN, width=1)
-            # Faint horizontal guides every 40px
-            for gy in range(0, h, 40):
-                self.create_line(0, gy, self.winfo_width(), gy,
-                                 fill="#0d1a2a", width=1)
-            self._y = (self._y + 2) % max(h, 1)
+        try:
+            if not self.winfo_exists():
+                return
+            self.update_idletasks()
+            h = self.winfo_height()
+            if h > 1:
+                self.delete("all")
+                # Scan line
+                self.create_line(0, self._y, self.winfo_width(), self._y,
+                                 fill=Colors.GLOW_CYAN, width=1)
+                # Faint horizontal guides every 40px
+                for gy in range(0, h, 40):
+                    self.create_line(0, gy, self.winfo_width(), gy,
+                                     fill="#0d1a2a", width=1)
+                self._y = (self._y + 2) % max(h, 1)
+        except tk.TclError:
+            self._running = False
+            return
         self.after(60, self._animate)
 
     def stop(self):
@@ -283,6 +320,7 @@ class DashboardModule:
 
         self._running = False
         self._root = None
+        self._ui_ready = False
         self._current_panel = 0
         self._system_state = "IDLE"
 
@@ -335,6 +373,7 @@ class DashboardModule:
     def stop(self):
         """Stop the dashboard and destroy the window."""
         self._running = False
+        self._ui_ready = False
         if self._hud_arc:
             self._hud_arc.stop()
         if self._scan_canvas:
@@ -344,6 +383,7 @@ class DashboardModule:
                 self._root.destroy()
             except tk.TclError:
                 pass
+            self._root = None
         print("[Dashboard] Stopped")
 
     # ════════════════════════════════════════════════════════════════════════
@@ -390,6 +430,12 @@ class DashboardModule:
 
         # ── Show default panel ──
         self._switch_to_panel(0)
+
+        # ── Mark UI as ready (event handlers can now safely update widgets) ──
+        self._ui_ready = True
+
+        # ── Apply any data that arrived while we were building the UI ──
+        self._flush_pending_data()
 
         # ── Enter main loop ──
         self._root.mainloop()
@@ -993,8 +1039,13 @@ class DashboardModule:
 
     def _on_dashboard_update(self, event):
         """Handle DASHBOARD_UPDATE — update greeting, preferences, etc."""
+        if not self._ui_ready:
+            return
         data = event.data
-        self._root.after(0, self._apply_dashboard_update, data)
+        try:
+            self._root.after(0, self._apply_dashboard_update, data)
+        except (tk.TclError, AttributeError):
+            pass
 
     def _apply_dashboard_update(self, data):
         if "greeting" in data:
@@ -1011,8 +1062,13 @@ class DashboardModule:
 
     def _on_switch_panel(self, event):
         """Handle DASHBOARD_SWITCH_PANEL."""
+        if not self._ui_ready:
+            return
         data = event.data
-        self._root.after(0, self._apply_switch_panel, data)
+        try:
+            self._root.after(0, self._apply_switch_panel, data)
+        except (tk.TclError, AttributeError):
+            pass
 
     def _apply_switch_panel(self, data):
         if "panel" in data:
@@ -1032,25 +1088,45 @@ class DashboardModule:
         """Handle NEWS_UPDATED."""
         headlines = event.data.get("headlines", [])
         self._news_data = headlines
-        self._root.after(0, self._render_news, headlines)
+        if not self._ui_ready:
+            return
+        try:
+            self._root.after(0, self._render_news, headlines)
+        except (tk.TclError, AttributeError):
+            pass
 
     def _on_stocks_update(self, event):
         """Handle STOCKS_UPDATED."""
         stocks = event.data.get("stocks", {})
         self._stocks_data = stocks
-        self._root.after(0, self._render_stocks, stocks)
+        if not self._ui_ready:
+            return
+        try:
+            self._root.after(0, self._render_stocks, stocks)
+        except (tk.TclError, AttributeError):
+            pass
 
     def _on_project_update(self, event):
         """Handle PROJECT_UPDATED."""
         data = event.data
         self._project_data = data
-        self._root.after(0, self._render_project, data)
+        if not self._ui_ready:
+            return
+        try:
+            self._root.after(0, self._render_project, data)
+        except (tk.TclError, AttributeError):
+            pass
 
     def _on_state_change(self, event):
         """Handle STATE_CHANGED — update status dot and badge."""
         state = event.data.get("state", "IDLE")
         self._system_state = state
-        self._root.after(0, self._apply_state_change, state)
+        if not self._ui_ready:
+            return
+        try:
+            self._root.after(0, self._apply_state_change, state)
+        except (tk.TclError, AttributeError):
+            pass
 
     def _apply_state_change(self, state):
         if state in ("ACTIVE", "LISTENING", "PROCESSING"):
@@ -1066,7 +1142,12 @@ class DashboardModule:
     def _on_speak_request(self, event):
         """Handle SPEAK_REQUEST — show text in status bar."""
         text = event.data.get("text", "")
-        self._root.after(0, self._apply_speak, text)
+        if not self._ui_ready:
+            return
+        try:
+            self._root.after(0, self._apply_speak, text)
+        except (tk.TclError, AttributeError):
+            pass
 
     def _apply_speak(self, text):
         self._status_var.set(f"JARVIS: {text}")
@@ -1081,8 +1162,23 @@ class DashboardModule:
                 val = ", ".join(str(v) for v in val)
             lbl.config(text=str(val))
 
+    def _flush_pending_data(self):
+        """Apply any data that arrived from background modules while the
+        UI was still being constructed (before _ui_ready was set)."""
+        if self._greeting_text and self._greeting_label:
+            self._greeting_label.config(text=self._greeting_text)
+        if self._news_data:
+            self._render_news(self._news_data)
+        if self._stocks_data:
+            self._render_stocks(self._stocks_data)
+        if self._project_data:
+            self._render_project(self._project_data)
+        if self._system_state != "IDLE":
+            self._apply_state_change(self._system_state)
+
     def _on_close(self):
         """Handle window close."""
+        self._ui_ready = False
         self.stop()
 
 
