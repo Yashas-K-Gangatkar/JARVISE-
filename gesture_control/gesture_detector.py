@@ -44,6 +44,7 @@ class GestureDetectionModule:
         self._hold_duration = self.config.get("hold_duration_seconds", 0.5)
         self._current_gesture = None
         self._gesture_start_time = None
+        self._gesture_fired = False  # True once the gesture has been published during a hold
 
         # Model path: look in the gesture_control directory first, then cwd
         self._model_path = os.path.join(
@@ -172,9 +173,10 @@ class GestureDetectionModule:
                     if self.config.get("show_camera", False):
                         self._draw_landmarks(frame, landmarks)
                 else:
-                    # No hand detected - reset hold timer
+                    # No hand detected - reset hold timer and fired flag
                     self._current_gesture = None
                     self._gesture_start_time = None
+                    self._gesture_fired = False
 
                 # Optional: Show camera feed
                 if self.config.get("show_camera", False):
@@ -279,28 +281,30 @@ class GestureDetectionModule:
         """
         Check if a gesture has been held for the required duration.
 
-        Only triggers an event after the gesture is held stable
-        for the configured hold duration.
+        Only triggers an event once per hold — the _gesture_fired flag
+        prevents the same gesture from being published on every subsequent
+        frame while the hand is still held in the same position.
         """
         from ai_core.event_bus import Event, EventTypes
 
         if gesture == self._current_gesture:
-            # Same gesture - check if hold duration reached
-            if self._gesture_start_time:
+            # Same gesture — check if hold duration reached
+            if self._gesture_start_time and not self._gesture_fired:
                 elapsed = time.time() - self._gesture_start_time
                 if elapsed >= self._hold_duration:
-                    # Gesture held long enough - publish event (once)
-                    if elapsed < self._hold_duration + 0.1:
-                        self.event_bus.publish(
-                            Event(EventTypes.GESTURE_DETECTED, {
-                                "gesture": gesture,
-                                "hold_duration": elapsed,
-                            })
-                        )
+                    # Gesture held long enough — publish event exactly once
+                    self._gesture_fired = True
+                    self.event_bus.publish(
+                        Event(EventTypes.GESTURE_DETECTED, {
+                            "gesture": gesture,
+                            "hold_duration": elapsed,
+                        })
+                    )
         else:
-            # New gesture - start timer
+            # New gesture — reset timer and fired flag
             self._current_gesture = gesture
             self._gesture_start_time = time.time()
+            self._gesture_fired = False
 
     # ------------------------------------------------------------------
     # Optional visualisation

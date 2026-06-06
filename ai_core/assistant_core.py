@@ -340,23 +340,13 @@ class AssistantCore:
             command = event.data.get("command", "")
             params = event.data.get("params", {})
 
-            # If the command is already "chat" or "unknown", it means
-            # the voice parser (or a previous re-route) already determined
-            # this should go to AI Chat.  Skip our own handler so the
-            # AIChatModule subscriber picks it up directly — this prevents
-            # an infinite loop where we keep re-publishing "chat" events.
+            # If the command is "chat" or "unknown", the AIChatModule
+            # subscriber will handle it directly (it subscribes to the
+            # same VOICE_COMMAND events).  We do NOT re-publish here
+            # because that would cause double-processing — AIChatModule
+            # processes both "chat" and "unknown" commands natively.
             if command in ("chat", "unknown"):
-                raw_text = event.data.get("text", "") or (params or {}).get("raw_text", "")
-                if raw_text and command == "unknown":
-                    # Re-publish as "chat" so AIChatModule processes it
-                    self.event_bus.publish(
-                        Event(EventTypes.VOICE_COMMAND, {
-                            "text": raw_text,
-                            "command": "chat",
-                            "params": {"raw_text": raw_text},
-                        })
-                    )
-                # If command is already "chat", AIChatModule handles it — do nothing more
+                print(f"[Core] Command '{command}' routed to AI Chat: '{event.data.get('text', '')}'")
                 return
 
             self._execute_command(command, params)
@@ -524,17 +514,11 @@ class AssistantCore:
                 print(f"[Core] Command '{command}' failed: {e}")
                 self._attempt_error_recovery(command, e)
         else:
-            # Unknown command → route to AI chat by re-publishing as "chat"
-            raw_text = (params or {}).get("raw_text", command)
-            if raw_text:
-                print(f"[Core] No handler for '{command}' — routing to AI Chat: '{raw_text}'")
-                self.event_bus.publish(
-                    Event(EventTypes.VOICE_COMMAND, {
-                        "text": raw_text,
-                        "command": "chat",
-                        "params": {"raw_text": raw_text},
-                    })
-                )
+            # No handler for this command — let AIChatModule handle it.
+            # Since AIChatModule also subscribes to VOICE_COMMAND events
+            # and handles "unknown" commands, the original event already
+            # reached it.  We just log it here.
+            print(f"[Core] No handler for '{command}' — AI Chat will handle it")
 
         # Return to active state (unless stop was requested)
         if command != "stop" and self.state_manager.current == AssistantState.PROCESSING:
