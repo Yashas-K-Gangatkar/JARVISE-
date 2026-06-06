@@ -16,6 +16,7 @@ Features:
 """
 
 import os
+import platform
 import signal
 import subprocess
 import tempfile
@@ -545,13 +546,7 @@ class TTSEngine:
         ]
 
         # Platform-specific players
-        if os.name == "nt":
-            # Windows: use PowerShell to play media
-            players.insert(0, [
-                "powershell", "-Command",
-                f"(New-Object Media.SoundPlayer '{filepath}').PlaySync()"
-            ])
-        elif os.uname().sysname == "Darwin":
+        if platform.system() == "Darwin":
             players.insert(0, ["afplay"])  # macOS built-in
 
         for player_cmd in players:

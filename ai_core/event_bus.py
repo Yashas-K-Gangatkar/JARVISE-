@@ -99,6 +99,9 @@ class EventBus:
 
     def start_processing(self):
         """Start the event processing loop in a background thread."""
+        if self._running:
+            # Already running — don't create a second processor thread
+            return
         self._running = True
         self._processor_thread = threading.Thread(
             target=self._process_loop, daemon=True, name="EventBusProcessor"
@@ -117,19 +120,43 @@ class EventBus:
 
     def _process_loop(self):
         """Internal: Process events from the queue."""
-        while self._running:
+        while True:
             event = self._queue.get()
             if event is None:
-                continue
+                # Sentinel — drain any remaining events then exit
+                while not self._queue.empty():
+                    try:
+                        remaining = self._queue.get_nowait()
+                        if remaining is not None:
+                            self._dispatch(remaining)
+                    except Exception:
+                        break
+                break
 
-            with self._lock:
-                subscribers = self._subscribers.get(event.event_type, [])
+            if not self._running:
+                # Stopping — dispatch this last event then drain and exit
+                self._dispatch(event)
+                while not self._queue.empty():
+                    try:
+                        remaining = self._queue.get_nowait()
+                        if remaining is not None:
+                            self._dispatch(remaining)
+                    except Exception:
+                        break
+                break
 
-            for callback in subscribers:
-                try:
-                    callback(event)
-                except Exception as e:
-                    print(
-                        f"[EventBus] Error in subscriber {callback.__name__} "
-                        f"for event '{event.event_type}': {e}"
-                    )
+            self._dispatch(event)
+
+    def _dispatch(self, event):
+        """Dispatch a single event to its subscribers."""
+        with self._lock:
+            subscribers = list(self._subscribers.get(event.event_type, []))
+
+        for callback in subscribers:
+            try:
+                callback(event)
+            except Exception as e:
+                print(
+                    f"[EventBus] Error in subscriber {callback.__name__} "
+                    f"for event '{event.event_type}': {e}"
+                )

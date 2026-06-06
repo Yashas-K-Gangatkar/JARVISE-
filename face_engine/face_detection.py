@@ -35,6 +35,11 @@ class FaceDetectionModule:
         self._known_names = []
         self._cooldown = self.config.get("greeting_cooldown_seconds", 300)
 
+        # Face presence tracking for FACE_LOST event
+        self._face_present = False
+        self._face_lost_frames = 0
+        self._face_lost_threshold = 30  # frames without face before publishing FACE_LOST
+
         # OpenCV face detector (Haar Cascade - built into OpenCV)
         cascade_path = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
         self._face_cascade = cv2.CascadeClassifier(cascade_path)
@@ -167,7 +172,19 @@ class FaceDetectionModule:
             )
 
             if len(face_locations) == 0:
+                # Track consecutive frames without a face
+                if self._face_present:
+                    self._face_lost_frames += 1
+                    if self._face_lost_frames >= self._face_lost_threshold:
+                        self._face_present = False
+                        self._face_lost_frames = 0
+                        from ai_core.event_bus import Event, EventTypes
+                        self.event_bus.publish(Event(EventTypes.FACE_LOST, {}))
                 continue
+
+            # Face detected — reset lost counter
+            self._face_lost_frames = 0
+            self._face_present = True
 
             # Process each detected face
             for (x, y, w, h) in face_locations:

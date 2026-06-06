@@ -523,8 +523,12 @@ class AIChatModule:
         # Remove trailing punctuation
         expr = expr.rstrip("?.!")
 
-        # Safety: only allow safe characters
+        # Safety: only allow safe characters (no ** exponentiation which can hang)
         if not re.match(r'^[\d\s\+\-\*/\(\)\.\,]+$', expr):
+            return None
+
+        # Block exponentiation operator to prevent hang attacks (e.g. 2**99999999)
+        if '**' in expr:
             return None
 
         # Replace comma separators (e.g. "1,000" → "1000")
