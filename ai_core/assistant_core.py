@@ -99,10 +99,12 @@ class AssistantCore:
         # Startup data fetched flag
         self._startup_data_fetched = False
 
-        # Gesture cooldown — ignore the same gesture if it fires again
-        # within this many seconds (prevents rapid-fire spam from
-        # MediaPipe's per-frame detection)
-        self._gesture_cooldown_seconds = 8.0
+        # Gesture cooldown — ignore ANY gesture if it fires within this
+        # many seconds of the previous one.  MediaPipe can flicker
+        # between gestures (e.g. thumbs_up ↔ thumbs_down) on
+        # successive frames when the hand is held still, so we need
+        # a general cooldown, not just a same-gesture cooldown.
+        self._gesture_cooldown_seconds = 10.0
         self._last_gesture_time = 0.0
         self._last_gesture_name = ""
 
@@ -309,13 +311,14 @@ class AssistantCore:
         if self.state_manager.current in (AssistantState.ACTIVE, AssistantState.LISTENING):
             gesture = event.data.get("gesture", "unknown")
 
-            # Cooldown: ignore the same gesture if it fired very recently.
-            # This prevents the MediaPipe detector from spamming "Confirmed."
-            # or "Cancelled." every frame when a hand is held in view.
+            # General cooldown: ignore ANY gesture if it fired within
+            # the cooldown window.  MediaPipe flickers between gestures
+            # (e.g. thumbs_up ↔ thumbs_down) on successive frames when
+            # the hand is held still, so we must block ALL gestures,
+            # not just repeats of the same one.
             now = time.time()
-            if (gesture == self._last_gesture_name
-                    and now - self._last_gesture_time < self._gesture_cooldown_seconds):
-                return  # skip — same gesture too soon
+            if now - self._last_gesture_time < self._gesture_cooldown_seconds:
+                return  # skip — any gesture too soon
             self._last_gesture_time = now
             self._last_gesture_name = gesture
 
