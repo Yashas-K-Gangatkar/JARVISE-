@@ -239,6 +239,11 @@ class VoiceControlModule:
         """
         Listen for a command after wake word is detected.
 
+        Waits for JARVIS's "Yes, how can I help you?" TTS to finish,
+        then listens for the user's actual command.  If the mic picks
+        up JARVIS's own TTS output, it retries up to 3 times instead
+        of giving up.
+
         Args:
             recognizer: SpeechRecognition recognizer instance
             microphone: SpeechRecognition microphone instance
@@ -246,58 +251,89 @@ class VoiceControlModule:
         import speech_recognition as sr
         from ai_core.event_bus import Event, EventTypes
 
-        print(f"[VoiceControl] Listening for command ({self._listen_timeout}s)...")
+        max_retries = 3  # how many times to retry after TTS feedback
 
-        try:
-            # ── Wait for TTS to finish before listening ──────────────
-            # After the wake word, JARVIS says "Yes, how can I help you?"
-            # We need to wait for that TTS to complete before we start
-            # listening for the actual command.
-            tts_wait = 0
-            while self._is_tts_speaking() and tts_wait < 8:
-                time.sleep(0.3)
-                tts_wait += 0.3
-            # Small extra pause to let the microphone settle
-            time.sleep(0.3)
+        for attempt in range(max_retries + 1):
+            print(f"[VoiceControl] Listening for command ({self._listen_timeout}s)...")
 
-            with microphone as source:
-                audio = recognizer.listen(
-                    source,
-                    timeout=self._listen_timeout,
-                    phrase_time_limit=self._phrase_limit,
+            try:
+                # ── Wait for TTS to finish before listening ──────────
+                # After the wake word, JARVIS says "Yes, how can I help you?"
+                # We need to wait for that TTS to complete before we start
+                # listening for the actual command.
+                #
+                # IMPORTANT: There's a race condition — the SPEAK_REQUEST
+                # event might not have been published yet when we first
+                # check _is_tts_speaking().  So we do an initial fixed
+                # delay to give the event bus time to deliver the event,
+                # THEN check the flag.
+                if attempt == 0:
+                    # First attempt: give the event bus time to publish
+                    # the SPEAK_REQUEST and set _tts_speaking = True.
+                    time.sleep(0.5)
+
+                tts_wait = 0
+                while self._is_tts_speaking() and tts_wait < 10:
+                    time.sleep(0.3)
+                    tts_wait += 0.3
+
+                # Extra pause after TTS finishes to let the mic settle
+                if tts_wait > 0:
+                    time.sleep(0.5)
+
+                with microphone as source:
+                    audio = recognizer.listen(
+                        source,
+                        timeout=self._listen_timeout,
+                        phrase_time_limit=self._phrase_limit,
+                    )
+
+                text = recognizer.recognize_google(audio).lower()
+                print(f"[VoiceControl] Command: '{text}'")
+
+                # Filter out TTS own phrases (feedback loop defense #2)
+                if self._is_tts_own_phrase(text):
+                    print(f"[VoiceControl] Ignoring TTS feedback in command: '{text}' — retrying...")
+                    # Don't return — loop back and listen again for the
+                    # user's real command.
+                    time.sleep(0.5)
+                    continue
+
+                # Parse the command
+                command, params = self._parse_command(text)
+
+                self.event_bus.publish(
+                    Event(EventTypes.VOICE_COMMAND, {
+                        "text": text,
+                        "command": command,
+                        "params": params,
+                    })
                 )
+                return  # command processed, we're done
 
-            text = recognizer.recognize_google(audio).lower()
-            print(f"[VoiceControl] Command: '{text}'")
-
-            # Filter out TTS own phrases (feedback loop defense #2)
-            if self._is_tts_own_phrase(text):
-                print(f"[VoiceControl] Ignoring TTS feedback in command: '{text}'")
+            except sr.WaitTimeoutError:
+                print("[VoiceControl] Command timeout - no speech detected")
+                self.event_bus.publish(Event(EventTypes.VOICE_TIMEOUT))
+                return
+            except sr.UnknownValueError:
+                print("[VoiceControl] Could not understand command")
+                # Only ask the user to repeat on the last attempt
+                if attempt >= max_retries:
+                    self.event_bus.publish(
+                        Event(EventTypes.SPEAK_REQUEST, {
+                            "text": "Sorry, I didn't catch that. Could you repeat?"
+                        })
+                    )
+                else:
+                    print("[VoiceControl] Retrying...")
+                    continue
+                return
+            except Exception as e:
+                print(f"[VoiceControl] Command error: {e}")
                 return
 
-            # Parse the command
-            command, params = self._parse_command(text)
-
-            self.event_bus.publish(
-                Event(EventTypes.VOICE_COMMAND, {
-                    "text": text,
-                    "command": command,
-                    "params": params,
-                })
-            )
-
-        except sr.WaitTimeoutError:
-            print("[VoiceControl] Command timeout - no speech detected")
-            self.event_bus.publish(Event(EventTypes.VOICE_TIMEOUT))
-        except sr.UnknownValueError:
-            print("[VoiceControl] Could not understand command")
-            self.event_bus.publish(
-                Event(EventTypes.SPEAK_REQUEST, {
-                    "text": "Sorry, I didn't catch that. Could you repeat?"
-                })
-            )
-        except Exception as e:
-            print(f"[VoiceControl] Command error: {e}")
+        # All retries exhausted
+        print("[VoiceControl] Max retries reached — returning to wake word listening")
 
     def _parse_command(self, text):
         """
