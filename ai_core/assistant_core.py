@@ -100,8 +100,9 @@ class AssistantCore:
         self._startup_data_fetched = False
 
         # Gesture cooldown — ignore the same gesture if it fires again
-        # within this many seconds (prevents rapid-fire spam)
-        self._gesture_cooldown_seconds = 5.0
+        # within this many seconds (prevents rapid-fire spam from
+        # MediaPipe's per-frame detection)
+        self._gesture_cooldown_seconds = 8.0
         self._last_gesture_time = 0.0
         self._last_gesture_name = ""
 
@@ -338,6 +339,26 @@ class AssistantCore:
         if self.state_manager.current in (AssistantState.ACTIVE, AssistantState.LISTENING):
             command = event.data.get("command", "")
             params = event.data.get("params", {})
+
+            # If the command is already "chat" or "unknown", it means
+            # the voice parser (or a previous re-route) already determined
+            # this should go to AI Chat.  Skip our own handler so the
+            # AIChatModule subscriber picks it up directly — this prevents
+            # an infinite loop where we keep re-publishing "chat" events.
+            if command in ("chat", "unknown"):
+                raw_text = event.data.get("text", "") or (params or {}).get("raw_text", "")
+                if raw_text and command == "unknown":
+                    # Re-publish as "chat" so AIChatModule processes it
+                    self.event_bus.publish(
+                        Event(EventTypes.VOICE_COMMAND, {
+                            "text": raw_text,
+                            "command": "chat",
+                            "params": {"raw_text": raw_text},
+                        })
+                    )
+                # If command is already "chat", AIChatModule handles it — do nothing more
+                return
+
             self._execute_command(command, params)
 
     def _on_voice_timeout(self, event):
@@ -503,12 +524,10 @@ class AssistantCore:
                 print(f"[Core] Command '{command}' failed: {e}")
                 self._attempt_error_recovery(command, e)
         else:
-            # Unknown command → route to AI chat so the user's question
-            # still gets answered instead of getting "I don't understand".
-            # Re-publish as a "chat" VOICE_COMMAND which the AIChatModule
-            # will pick up.
+            # Unknown command → route to AI chat by re-publishing as "chat"
             raw_text = (params or {}).get("raw_text", command)
             if raw_text:
+                print(f"[Core] No handler for '{command}' — routing to AI Chat: '{raw_text}'")
                 self.event_bus.publish(
                     Event(EventTypes.VOICE_COMMAND, {
                         "text": raw_text,
