@@ -243,6 +243,7 @@ class VoiceControlModule:
             recognizer: SpeechRecognition recognizer instance
             microphone: SpeechRecognition microphone instance
         """
+        import speech_recognition as sr
         from ai_core.event_bus import Event, EventTypes
 
         print(f"[VoiceControl] Listening for command ({self._listen_timeout}s)...")
